@@ -1,8 +1,8 @@
 #import <React/RCTLog.h>
 
-#import "RCTVideoSwiftLog.h"
+#import "RCTSwiftLog.h"
 
-@implementation RCTVideoSwiftLog
+@implementation RCTSwiftLog
 
 + (void)info:(NSString *)message file:(NSString *)file line:(NSUInteger)line
 {

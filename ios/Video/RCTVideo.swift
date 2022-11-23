@@ -21,7 +21,7 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
     private var _localSourceEncryptionKeyScheme:String?
     
     /* Required to publish events */
-    private var _eventDispatcher:RCTEventDispatcher?
+    private var _eventDispatcher:RCTEventDispatcherProtocol?
     private var _videoLoadStarted:Bool = false
     
     private var _pendingSeek:Bool = false
@@ -95,7 +95,7 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
     @objc var onRestoreUserInterfaceForPictureInPictureStop: RCTDirectEventBlock?
     @objc var onGetLicense: RCTDirectEventBlock?
     
-    init(eventDispatcher:RCTEventDispatcher!) {
+    init(eventDispatcher:RCTEventDispatcherProtocol!) {
         super.init(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         
         _eventDispatcher = eventDispatcher
@@ -219,12 +219,6 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
     @objc
     func setSrc(_ source:NSDictionary!) {
         _source = VideoSource(source)
-        if (_source?.uri == nil || _source?.uri == "") {
-            DispatchQueue.global(qos: .default).async {
-                self._player?.replaceCurrentItem(with: nil)
-            }
-            return;
-        }
         removePlayerLayer()
         _playerObserver.player = nil
         _playerObserver.playerItem = nil
@@ -233,20 +227,10 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
         RCTVideoUtils.delay()
             .then{ [weak self] in
                 guard let self = self else {throw NSError(domain: "", code: 0, userInfo: nil)}
-                guard let source = self._source else {
-                    DebugLog("The source not exist")
-                    throw NSError(domain: "", code: 0, userInfo: nil)
-                }
-                if let uri = source.uri, uri.starts(with: "ph://") {
-                    return Promise {
-                        RCTVideoUtils.preparePHAsset(uri: uri).then { asset in
-                            return self.playerItemPrepareText(asset:asset, assetOptions:nil)
-                        }
-                    }
-                }
-                guard let assetResult = RCTVideoUtils.prepareAsset(source: source),
-                      let asset = assetResult.asset,
-                      let assetOptions = assetResult.assetOptions else {
+                guard let source = self._source,
+                let assetResult = RCTVideoUtils.prepareAsset(source: source),
+                let asset = assetResult.asset,
+                let assetOptions = assetResult.assetOptions else {
                       DebugLog("Could not find video URL in source '\(self._source)'")
                       throw NSError(domain: "", code: 0, userInfo: nil)
                   }
@@ -280,10 +264,7 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
                     self._playerItem?.preferredPeakBitRate = Double(maxBitRate)
                 }
                 
-                self._player = self._player ?? AVPlayer()
-                DispatchQueue.global(qos: .default).async {
-                    self._player?.replaceCurrentItem(with: playerItem)
-                }
+                self._player = AVPlayer(playerItem: self._playerItem)
                 self._playerObserver.player = self._player
                 self.applyModifiers()
                 self._player?.actionAtItemEnd = .none
@@ -704,7 +685,6 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
             else
             {
                 _playerViewController?.view.removeFromSuperview()
-                _playerViewController?.removeFromParent()
                 _playerViewController = nil
                 _playerObserver.playerViewController = nil
                 self.usePlayerLayer()
@@ -837,7 +817,6 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
         
         if let _playerViewController = _playerViewController {
             _playerViewController.view.removeFromSuperview()
-            _playerViewController.removeFromParent()
             _playerViewController.rctDelegate = nil
             _playerViewController.player = nil
             self._playerViewController = nil
@@ -1064,7 +1043,6 @@ class RCTVideo: UIView, RCTVideoPlayerViewControllerDelegate, RCTPlayerObserverH
             item.seek(to: CMTime.zero)
             self.applyModifiers()
         } else {
-            self.setPaused(true);
             _playerObserver.removePlayerTimeObserver()
         }
     }

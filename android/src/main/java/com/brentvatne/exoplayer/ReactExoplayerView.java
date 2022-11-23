@@ -6,18 +6,19 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.media.AudioManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.Display;
 import android.view.View;
 import android.view.Window;
 import android.view.accessibility.CaptioningManager;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
-
-import androidx.activity.OnBackPressedCallback;
+import android.util.DisplayMetrics;
 
 import com.brentvatne.react.R;
 import com.brentvatne.receiver.AudioBecomingNoisyReceiver;
@@ -44,9 +45,8 @@ import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Timeline;
-import com.google.android.exoplayer2.Tracks;
+import com.google.android.exoplayer2.TracksInfo;
 import com.google.android.exoplayer2.drm.DefaultDrmSessionManager;
-import com.google.android.exoplayer2.drm.DefaultDrmSessionManagerProvider;
 import com.google.android.exoplayer2.drm.DrmSessionEventListener;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.drm.DrmSessionManagerProvider;
@@ -75,8 +75,8 @@ import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
 import com.google.android.exoplayer2.trackselection.ExoTrackSelection;
-import com.google.android.exoplayer2.trackselection.TrackSelectionParameters;
-import com.google.android.exoplayer2.trackselection.TrackSelectionOverride;
+import com.google.android.exoplayer2.trackselection.TrackSelectionOverrides;
+import com.google.android.exoplayer2.trackselection.TrackSelectionOverrides.TrackSelectionOverride;
 import com.google.android.exoplayer2.ui.PlayerControlView;
 import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.upstream.DataSource;
@@ -111,6 +111,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.lang.Integer;
+import java.lang.reflect.Method;
 
 @SuppressLint("ViewConstructor")
 class ReactExoplayerView extends FrameLayout implements
@@ -143,7 +144,6 @@ class ReactExoplayerView extends FrameLayout implements
     private Player.Listener eventListener;
 
     private ExoPlayerView exoPlayerView;
-    private FullScreenPlayerView fullScreenPlayerView;
 
     private DataSource.Factory mediaDataSourceFactory;
     private ExoPlayer player;
@@ -167,6 +167,7 @@ class ReactExoplayerView extends FrameLayout implements
     private boolean hasDrmFailed = false;
     private boolean isUsingContentResolution = false;
     private boolean selectTrackWhenReady = false;
+    private boolean limitMaxResolutionToScreenSize = false;
 
     private int minBufferMs = DefaultLoadControl.DEFAULT_MIN_BUFFER_MS;
     private int maxBufferMs = DefaultLoadControl.DEFAULT_MAX_BUFFER_MS;
@@ -175,6 +176,7 @@ class ReactExoplayerView extends FrameLayout implements
     private double maxHeapAllocationPercent = ReactExoplayerView.DEFAULT_MAX_HEAP_ALLOCATION_PERCENT;
     private double minBackBufferMemoryReservePercent = ReactExoplayerView.DEFAULT_MIN_BACK_BUFFER_MEMORY_RESERVE;
     private double minBufferMemoryReservePercent = ReactExoplayerView.DEFAULT_MIN_BUFFER_MEMORY_RESERVE;
+    private double enableBackBufferAvailableMemory = -1f;
     private Handler mainHandler;
 
     // Props from React
@@ -190,7 +192,6 @@ class ReactExoplayerView extends FrameLayout implements
     private Dynamic textTrackValue;
     private ReadableArray textTracks;
     private boolean disableFocus;
-    private boolean focusable = true;
     private boolean disableBuffering;
     private long contentStartTime = -1L;
     private boolean disableDisconnectError;
@@ -210,29 +211,18 @@ class ReactExoplayerView extends FrameLayout implements
     private final AudioManager audioManager;
     private final AudioBecomingNoisyReceiver audioBecomingNoisyReceiver;
 
-    // store last progress event values to avoid sending unnecessary messages
-    private long lastPos = -1;
-    private long lastBufferDuration = -1;
-    private long lastDuration = -1;
-
     private final Handler progressHandler = new Handler(Looper.getMainLooper()) {
         @Override
         public void handleMessage(Message msg) {
             switch (msg.what) {
                 case SHOW_PROGRESS:
-                    if (player != null) {
+                    if (player != null
+                            && player.getPlaybackState() == Player.STATE_READY
+                            && player.getPlayWhenReady()
+                            ) {
                         long pos = player.getCurrentPosition();
                         long bufferedDuration = player.getBufferedPercentage() * player.getDuration() / 100;
-                        long duration = player.getDuration();
-
-                        if (lastPos != pos
-                                || lastBufferDuration != bufferedDuration
-                                || lastDuration != duration) {
-                            lastPos = pos;
-                            lastBufferDuration = bufferedDuration;
-                            lastDuration = duration;
-                            eventEmitter.progressChanged(pos, bufferedDuration, player.getDuration(), getPositionInFirstPeriodMsForCurrentWindow(pos));
-                        }
+                        eventEmitter.progressChanged(pos, bufferedDuration, player.getDuration(), getPositionInFirstPeriodMsForCurrentWindow(pos));
                         msg = obtainMessage(SHOW_PROGRESS);
                         sendMessageDelayed(msg, Math.round(mProgressUpdateInterval));
                     }
@@ -284,8 +274,6 @@ class ReactExoplayerView extends FrameLayout implements
         exoPlayerView.setLayoutParams(layoutParams);
 
         addView(exoPlayerView, 0, layoutParams);
-
-        exoPlayerView.setFocusable(this.focusable);
 
         mainHandler = new Handler();
     }
@@ -372,17 +360,9 @@ class ReactExoplayerView extends FrameLayout implements
             playerControlView = new PlayerControlView(getContext());
         }
 
-        if (fullScreenPlayerView == null) {
-            fullScreenPlayerView = new FullScreenPlayerView(getContext(), exoPlayerView, playerControlView, new OnBackPressedCallback(true) {
-                @Override
-                public void handleOnBackPressed() {
-                    setFullscreen(false);
-                }
-            });
-        }
-
         // Setting the player for the playerControlView
         playerControlView.setPlayer(player);
+        playerControlView.show();
         playPauseControlContainer = playerControlView.findViewById(R.id.exo_play_pause_container);
 
         // Invoking onClick event for exoplayerView
@@ -414,23 +394,10 @@ class ReactExoplayerView extends FrameLayout implements
             }
         });
 
-        //Handling the fullScreenButton click event
-        final ImageButton fullScreenButton = playerControlView.findViewById(R.id.exo_fullscreen);
-        fullScreenButton.setOnClickListener(v -> setFullscreen(!isFullscreen));
-        updateFullScreenButtonVisbility();
-
         // Invoking onPlaybackStateChanged and onPlayWhenReadyChanged events for Player
         eventListener = new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int playbackState) {
-                View playButton = playerControlView.findViewById(R.id.exo_play);
-                View pauseButton = playerControlView.findViewById(R.id.exo_pause);
-                if (playButton != null && playButton.getVisibility() == GONE) {
-                    playButton.setVisibility(INVISIBLE);
-                }
-                if (pauseButton != null && pauseButton.getVisibility() == GONE) {
-                    pauseButton.setVisibility(INVISIBLE);
-                }
                 reLayout(playPauseControlContainer);
                 //Remove this eventListener once its executed. since UI will work fine once after the reLayout is done
                 player.removeListener(eventListener);
@@ -450,7 +417,7 @@ class ReactExoplayerView extends FrameLayout implements
      * Adding Player control to the frame layout
      */
     private void addPlayerControl() {
-        if(playerControlView == null) return;
+        if(player == null) return;
         LayoutParams layoutParams = new LayoutParams(
                 LayoutParams.MATCH_PARENT,
                 LayoutParams.MATCH_PARENT);
@@ -460,7 +427,6 @@ class ReactExoplayerView extends FrameLayout implements
             removeViewAt(indexOfPC);
         }
         addView(playerControlView, 1, layoutParams);
-        reLayout(playerControlView);
     }
 
     /**
@@ -583,14 +549,23 @@ class ReactExoplayerView extends FrameLayout implements
                 }
             }
         }, 1);
-
+        
     }
 
     private void initializePlayerCore(ReactExoplayerView self) {
         ExoTrackSelection.Factory videoTrackSelectionFactory = new AdaptiveTrackSelection.Factory();
-        self.trackSelector = new DefaultTrackSelector(getContext(), videoTrackSelectionFactory);
+        self.trackSelector = new DefaultTrackSelector(videoTrackSelectionFactory);
         self.trackSelector.setParameters(trackSelector.buildUponParameters()
                 .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate));
+
+        Runtime runtime = Runtime.getRuntime();
+        long usedMemory = runtime.totalMemory() - runtime.freeMemory();
+        long freeMemory = runtime.maxMemory() - usedMemory;
+        int backBufferMs = backBufferDurationMs;
+        if (freeMemory < (self.enableBackBufferAvailableMemory * 1000 * 1000)) {
+            Log.w("LoadControl", "Available memory is less than required to enable back buffer, setting to 0ms!");
+            backBufferMs = 0;
+        }
 
         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
         RNVLoadControl loadControl = new RNVLoadControl(
@@ -601,14 +576,14 @@ class ReactExoplayerView extends FrameLayout implements
                 bufferForPlaybackAfterRebufferMs,
                 -1,
                 true,
-                backBufferDurationMs,
+                backBufferMs,
                 DefaultLoadControl.DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME
         );
         DefaultRenderersFactory renderersFactory =
                 new DefaultRenderersFactory(getContext())
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF);
         player = new ExoPlayer.Builder(getContext(), renderersFactory)
-                    .setTrackSelector(self.trackSelector)
+                    .setTrackSelector​(self.trackSelector)
                     .setBandwidthMeter(bandwidthMeter)
                     .setLoadControl(loadControl)
                     .build();
@@ -738,8 +713,6 @@ class ReactExoplayerView extends FrameLayout implements
                     return drmSessionManager;
                 }
             };
-        } else {
-            drmProvider = new DefaultDrmSessionManagerProvider();
         }
         switch (type) {
             case C.TYPE_SS:
@@ -819,6 +792,10 @@ class ReactExoplayerView extends FrameLayout implements
             trackSelector = null;
             player = null;
         }
+        Runtime runtime = Runtime.getRuntime();
+        if (runtime != null) {
+            runtime.gc();
+        }
         progressHandler.removeMessages(SHOW_PROGRESS);
         themedReactContext.removeLifecycleEventListener(this);
         audioBecomingNoisyReceiver.removeListener();
@@ -846,10 +823,7 @@ class ReactExoplayerView extends FrameLayout implements
                 player.setPlayWhenReady(true);
             }
         } else {
-            // ensure playback is not ENDED, else it will trigger another ended event
-            if (player.getPlaybackState() != Player.STATE_ENDED) {
-                player.setPlayWhenReady(false);
-            }
+            player.setPlayWhenReady(false);
         }
     }
 
@@ -896,6 +870,7 @@ class ReactExoplayerView extends FrameLayout implements
             setFullscreen(false);
         }
         audioManager.abandonAudioFocus(this);
+        
     }
 
     private void updateResumePosition() {
@@ -990,7 +965,6 @@ class ReactExoplayerView extends FrameLayout implements
             int playbackState = player.getPlaybackState();
             boolean playWhenReady = player.getPlayWhenReady();
             String text = "onStateChanged: playWhenReady=" + playWhenReady + ", playbackState=";
-            eventEmitter.playbackRateChange(playWhenReady && playbackState == ExoPlayer.STATE_READY ? 1.0f : 0.0f);
             switch (playbackState) {
                 case Player.STATE_IDLE:
                     text += "idle";
@@ -1051,15 +1025,9 @@ class ReactExoplayerView extends FrameLayout implements
     private void videoLoaded() {
         if (loadVideoStarted) {
             loadVideoStarted = false;
-            if (audioTrackType != null) {
-                setSelectedAudioTrack(audioTrackType, audioTrackValue);
-            }
-            if (videoTrackType != null) {
-                setSelectedVideoTrack(videoTrackType, videoTrackValue);
-            }
-            if (textTrackType != null) {
-                setSelectedTextTrack(textTrackType, textTrackValue);
-            }
+            setSelectedAudioTrack(audioTrackType, audioTrackValue);
+            setSelectedVideoTrack(videoTrackType, videoTrackValue);
+            setSelectedTextTrack(textTrackType, textTrackValue);
             Format videoFormat = player.getVideoFormat();
             int width = videoFormat != null ? videoFormat.width : 0;
             int height = videoFormat != null ? videoFormat.height : 0;
@@ -1125,7 +1093,7 @@ class ReactExoplayerView extends FrameLayout implements
         WritableArray videoTracks = Arguments.createArray();
 
         MappingTrackSelector.MappedTrackInfo info = trackSelector.getCurrentMappedTrackInfo();
-
+        
         if (info == null || trackRendererIndex == C.INDEX_UNSET) {
             return videoTracks;
         }
@@ -1136,6 +1104,15 @@ class ReactExoplayerView extends FrameLayout implements
 
             for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
                 Format format = group.getFormat(trackIndex);
+                WritableMap videoTrack = Arguments.createMap();
+
+                int shortestFormatSide = format.height < format.width ? format.height : format.width;
+                int shortestScreenSize = this.getScreenShortestSide(this.themedReactContext);
+                if (this.limitMaxResolutionToScreenSize && shortestFormatSide > shortestScreenSize) {
+                    // This video track is larger than screen resolution so we do not include it in the list of video tracks
+                    continue;
+                }
+
                 if (isFormatSupported(format)) {
                     WritableMap videoTrack = Arguments.createMap();
                     videoTrack.putInt("width", format.width == Format.NO_VALUE ? 0 : format.width);
@@ -1151,6 +1128,45 @@ class ReactExoplayerView extends FrameLayout implements
         return videoTracks;
     }
 
+    private int getScreenShortestSide(ThemedReactContext context) {
+        if (context == null) {
+            // No context so we fallback to max int
+            return (int)Integer.MAX_INT;
+        }
+        Display display = context.getCurrentActivity().getWindowManager().getDefaultDisplay();
+        int realWidth;
+        int realHeight;
+
+        if (Build.VERSION.SDK_INT >= 17){
+            //new pleasant way to get real metrics
+            DisplayMetrics realMetrics = new DisplayMetrics();
+            display.getRealMetrics(realMetrics);
+            realWidth = realMetrics.widthPixels;
+            realHeight = realMetrics.heightPixels;
+
+        } else if (Build.VERSION.SDK_INT >= 14) {
+            //Reflection for this weird in-between time
+            try {
+                Method mGetRawH = Display.class.getMethod("getRawHeight");
+                Method mGetRawW = Display.class.getMethod("getRawWidth");
+                realWidth = (Integer) mGetRawW.invoke(display);
+                realHeight = (Integer) mGetRawH.invoke(display);
+
+            } catch (Exception e) {
+                //This may not be 100% accurate, but it's all we've got
+                realWidth = display.getWidth();
+                realHeight = display.getHeight();
+                Log.e("Display Info", "Couldn't use reflection to get the real display metrics.");
+            }
+
+        } else {
+            //This should be close, as lower API devices should not have window navigation bars
+            realWidth = display.getWidth();
+            realHeight = display.getHeight();
+        }
+        return realHeight < realWidth ? realHeight : realWidth;
+    }
+
     private WritableArray getVideoTrackInfoFromManifest() {
         return this.getVideoTrackInfoFromManifest(0);
     }
@@ -1161,14 +1177,19 @@ class ReactExoplayerView extends FrameLayout implements
         final DataSource dataSource = this.mediaDataSourceFactory.createDataSource();
         final Uri sourceUri = this.srcUri;
         final long startTime = this.contentStartTime * 1000 - 100; // s -> ms with 100ms offset
+        int shortestScreenSide = this.getScreenShortestSide(this.themedReactContext);
+        boolean limitMaxRes = this.limitMaxResolutionToScreenSize;
 
         Future<WritableArray> result = es.submit(new Callable<WritableArray>() {
             DataSource ds = dataSource;
             Uri uri = sourceUri;
             long startTimeUs = startTime * 1000; // ms -> us
+            int shortestScreenSize = shortestScreenSide;
+            boolean limitMaxResolutionToScreenSize = limitMaxRes;
 
             public WritableArray call() throws Exception {
                 WritableArray videoTracks = Arguments.createArray();
+
                 try  {
                     DashManifest manifest = DashUtil.loadManifest(this.ds, this.uri);
                     int periodCount = manifest.getPeriodCount();
@@ -1188,6 +1209,14 @@ class ReactExoplayerView extends FrameLayout implements
                                 }
                                 hasFoundContentPeriod = true;
                                 WritableMap videoTrack = Arguments.createMap();
+
+                                int shortestFormatSide = format.height < format.width ? format.height : format.width;
+                                
+                                if (limitMaxResolutionToScreenSize && shortestFormatSide > shortestScreenSize) {
+                                    // This video track is larger than screen resolution so we do not include it in the list of video tracks
+                                    continue;
+                                }
+
                                 videoTrack.putInt("width", format.width == Format.NO_VALUE ? 0 : format.width);
                                 videoTrack.putInt("height",format.height == Format.NO_VALUE ? 0 : format.height);
                                 videoTrack.putInt("bitrate", format.bitrate == Format.NO_VALUE ? 0 : format.bitrate);
@@ -1305,7 +1334,7 @@ class ReactExoplayerView extends FrameLayout implements
     }
 
     @Override
-    public void onTracksChanged(Tracks tracks) {
+    public void onTracksInfoChanged(TracksInfo tracksInfo) {
         // Do nothing.
     }
 
@@ -1446,6 +1475,10 @@ class ReactExoplayerView extends FrameLayout implements
         exoPlayerView.setResizeMode(resizeMode);
     }
 
+    public void setLimitMaxResolutionToScreenSize(boolean limitMaxResolutionToScreenSize) {
+        this.limitMaxResolutionToScreenSize = limitMaxResolutionToScreenSize;
+    }
+
     private void applyModifiers() {
         setRepeatModifier(repeat);
         setMutedModifier(muted);
@@ -1584,7 +1617,7 @@ class ReactExoplayerView extends FrameLayout implements
             for (int j = 0; j < group.length; j++) {
                 allTracks.add(j);
             }
-
+            
             // Valiate list of all tracks and add only supported formats
             int supportedFormatLength = 0;
             ArrayList<Integer> supportedTrackList = new ArrayList<Integer>();
@@ -1617,10 +1650,10 @@ class ReactExoplayerView extends FrameLayout implements
         TrackSelectionOverride selectionOverride = new TrackSelectionOverride(groups.get(groupIndex), tracks);
 
         DefaultTrackSelector.Parameters selectionParameters = trackSelector.getParameters()
-            .buildUpon()
-            .setRendererDisabled(rendererIndex, false)
-            .addOverride(selectionOverride)
-            .build();
+                .buildUpon()
+                .setRendererDisabled(rendererIndex, false)
+                .setTrackSelectionOverrides(new TrackSelectionOverrides.Builder().addOverride(selectionOverride).build())
+                .build();
         trackSelector.setParameters(selectionParameters);
     }
 
@@ -1743,18 +1776,13 @@ class ReactExoplayerView extends FrameLayout implements
         this.disableFocus = disableFocus;
     }
 
-    public void setFocusable(boolean focusable) {
-        this.focusable = focusable;
-        exoPlayerView.setFocusable(this.focusable);
-    }
-
     public void setBackBufferDurationMs(int backBufferDurationMs) {
         Runtime runtime = Runtime.getRuntime();
         long usedMemory = runtime.totalMemory() - runtime.freeMemory();
         long freeMemory = runtime.maxMemory() - usedMemory;
         long reserveMemory = (long)minBackBufferMemoryReservePercent * runtime.maxMemory();
         if (reserveMemory > freeMemory) {
-            // We don't have enough memory in reserve so we will
+            // We don't have enough memory in reserve so we will 
             Log.w("ExoPlayer Warning", "Not enough reserve memory, setting back buffer to 0ms to reduce memory pressure!");
             this.backBufferDurationMs = 0;
             return;
@@ -1768,22 +1796,6 @@ class ReactExoplayerView extends FrameLayout implements
 
     public void setDisableBuffering(boolean disableBuffering) {
         this.disableBuffering = disableBuffering;
-    }
-
-    private void updateFullScreenButtonVisbility() {
-        if (playerControlView != null) {
-            final ImageButton fullScreenButton = playerControlView.findViewById(R.id.exo_fullscreen);
-            if (controls) {
-                //Handling the fullScreenButton click event
-                if (isFullscreen && fullScreenPlayerView != null && !fullScreenPlayerView.isShowing()) {
-                    fullScreenButton.setVisibility(GONE);
-                } else {
-                    fullScreenButton.setVisibility(VISIBLE);
-                }
-            } else {
-                fullScreenButton.setVisibility(GONE);
-            }
-        }
     }
 
     public void setDisableDisconnectError(boolean disableDisconnectError) {
@@ -1800,7 +1812,6 @@ class ReactExoplayerView extends FrameLayout implements
         if (activity == null) {
             return;
         }
-
         Window window = activity.getWindow();
         View decorView = window.getDecorView();
         int uiOptions;
@@ -1814,27 +1825,14 @@ class ReactExoplayerView extends FrameLayout implements
                         | SYSTEM_UI_FLAG_FULLSCREEN;
             }
             eventEmitter.fullscreenWillPresent();
-            if (controls && fullScreenPlayerView != null) {
-                fullScreenPlayerView.show();
-            }
-            post(() -> {
-                decorView.setSystemUiVisibility(uiOptions);
-                eventEmitter.fullscreenDidPresent();
-            });
+            decorView.setSystemUiVisibility(uiOptions);
+            eventEmitter.fullscreenDidPresent();
         } else {
             uiOptions = View.SYSTEM_UI_FLAG_VISIBLE;
             eventEmitter.fullscreenWillDismiss();
-            if (controls && fullScreenPlayerView != null) {
-                fullScreenPlayerView.dismiss();
-                reLayout(exoPlayerView);
-            }
-            post(() -> {
-                decorView.setSystemUiVisibility(uiOptions);
-                eventEmitter.fullscreenDidDismiss();
-            });
+            decorView.setSystemUiVisibility(uiOptions);
+            eventEmitter.fullscreenDidDismiss();
         }
-        // need to be done at the end to avoid hiding fullscreen control button when fullScreenPlayerView is shown
-        updateFullScreenButtonVisbility();
     }
 
     public void setUseTextureView(boolean useTextureView) {
@@ -1850,7 +1848,7 @@ class ReactExoplayerView extends FrameLayout implements
         exoPlayerView.setHideShutterView(hideShutterView);
     }
 
-    public void setBufferConfig(int newMinBufferMs, int newMaxBufferMs, int newBufferForPlaybackMs, int newBufferForPlaybackAfterRebufferMs, double newMaxHeapAllocationPercent, double newMinBackBufferMemoryReservePercent, double newMinBufferMemoryReservePercent) {
+    public void setBufferConfig(int newMinBufferMs, int newMaxBufferMs, int newBufferForPlaybackMs, int newBufferForPlaybackAfterRebufferMs, double newMaxHeapAllocationPercent, double newMinBackBufferMemoryReservePercent, double newMinBufferMemoryReservePercent, double minAvailableMemoryToEnableBackBuffer) {
         minBufferMs = newMinBufferMs;
         maxBufferMs = newMaxBufferMs;
         bufferForPlaybackMs = newBufferForPlaybackMs;
@@ -1858,6 +1856,7 @@ class ReactExoplayerView extends FrameLayout implements
         maxHeapAllocationPercent = newMaxHeapAllocationPercent;
         minBackBufferMemoryReservePercent = newMinBackBufferMemoryReservePercent;
         minBufferMemoryReservePercent = newMinBufferMemoryReservePercent;
+        enableBackBufferAvailableMemory = minAvailableMemoryToEnableBackBuffer;
         releasePlayer();
         initializePlayer();
     }
@@ -1903,18 +1902,14 @@ class ReactExoplayerView extends FrameLayout implements
      */
     public void setControls(boolean controls) {
         this.controls = controls;
+        if (player == null || exoPlayerView == null) return;
         if (controls) {
             addPlayerControl();
-            updateFullScreenButtonVisbility();
         } else {
             int indexOfPC = indexOfChild(playerControlView);
             if (indexOfPC != -1) {
                 removeViewAt(indexOfPC);
             }
         }
-    }
-
-    public void setSubtitleStyle(SubtitleStyle style) {
-        exoPlayerView.setSubtitleStyle(style);
     }
 }

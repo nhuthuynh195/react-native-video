@@ -5,6 +5,7 @@
   * [tvOS](#tvos-installation)
   * [Android](#android-installation)
   * [Windows](#windows-installation)
+  * [react-native-dom](#react-native-dom-installation)
 * [Examples](#examples)
   * [iOS](#ios-example)
   * [Android](#android-example)
@@ -211,10 +212,36 @@ Add `PackageProviders().Append(winrt::ReactNativeVideoCPP::ReactPackageProvider(
 Follow the manual linking instuctions for React Native Windows 0.62 above, but substitute _ReactNativeVideoCPP61_ for _ReactNativeVideoCPP_.
 
 </details>
- 
+
+### react-native-dom installation
+<details>
+  <summary>react-native-dom details</summary>
+
+Make the following additions to the given files manually:
+
+#### **dom/bootstrap.js**
+
+Import RCTVideoManager and add it to the list of nativeModules:
+
+```javascript
+import { RNDomInstance } from "react-native-dom";
+import { name as appName } from "../app.json";
+import RCTVideoManager from 'react-native-video/dom/RCTVideoManager'; // Add this
+
+// Path to RN Bundle Entrypoint ================================================
+const rnBundlePath = "./entry.bundle?platform=dom&dev=true";
+
+// React Native DOM Runtime Options =============================================
+const ReactNativeDomOptions = {
+  enableHotReload: false,
+  nativeModules: [RCTVideoManager] // Add this
+};
+```
+</details>
+
 ## Examples
 
-Run `yarn xbasic install` in the root directory before running any of the examples.
+Run `yarn xbasic install` before running any of the examples.
 
 ### iOS Example
 ```
@@ -271,19 +298,20 @@ var styles = StyleSheet.create({
 |[backBufferDurationMs](#backBufferDurationMs)| Android |
 |[bufferConfig](#bufferconfig)|Android|
 |[contentStartTime](#contentStartTime)| Android |
-|[controls](#controls)|Android, iOS|
+|[controls](#controls)|Android, iOS, react-native-dom|
 |[currentPlaybackTime](#currentPlaybackTime)|Android|
 |[disableFocus](#disableFocus)|Android, iOS|
 |[disableDisconnectError](#disableDisconnectError)|Android|
 |[filter](#filter)|iOS|
 |[filterEnabled](#filterEnabled)|iOS|
-|[focusable](#focusable)|Android|
 |[fullscreen](#fullscreen)|iOS|
 |[fullscreenAutorotate](#fullscreenautorotate)|iOS|
 |[fullscreenOrientation](#fullscreenorientation)|iOS|
 |[headers](#headers)|Android|
 |[hideShutterView](#hideshutterview)|Android|
+|[id](#id)|react-native-dom|
 |[ignoreSilentSwitch](#ignoresilentswitch)|iOS|
+|[limitMaxResolutionToScreenSize](#limitMaxResolutionToScreenSize)|Android|
 |[maxBitRate](#maxbitrate)|Android, iOS|
 |[minLoadRetryCount](#minLoadRetryCount)|Android|
 |[mixWithOthers](#mixWithOthers)|iOS|
@@ -305,7 +333,6 @@ var styles = StyleSheet.create({
 |[selectedTextTrack](#selectedtexttrack)|Android, iOS|
 |[selectedVideoTrack](#selectedvideotrack)|Android|
 |[source](#source)|All|
-|[subtitleStyle](#subtitleStyle)|Android|
 |[textTracks](#texttracks)|Android, iOS|
 |[trackId](#trackId)|Android|
 |[useTextureView](#usetextureview)|Android|
@@ -346,13 +373,6 @@ var styles = StyleSheet.create({
 |[restoreUserInterfaceForPictureInPictureStop](#restoreuserinterfaceforpictureinpicturestop)|iOS|
 |[seek](#seek)|All|
 
-### Static methods
-
-| Name |Plateforms Support  |
-|--|--|
-|[getWidevineLevel](#getWidevineLevel)|Android|
-|[isCodecSupported](#isCodecSupported)|Android|
-|[isHEVCSupported](#isHEVCSupported)|Android|
 
 ### Configurable props
 
@@ -422,21 +442,19 @@ Determines whether to show player controls.
 * **true** - Show player controls
 
 Note on iOS, controls are always shown when in fullscreen mode.
-Note on Android, native controls are available by default.
-If needed, you can also add your controls or use a package like [react-native-video-controls](https://github.com/itsnubix/react-native-video-controls) or [react-native-media-console](https://github.com/criszz77/react-native-media-console), see [Usefull Side Project](./docs/PROJECTS.md).
 
 ### contentStartTime
 The start time in ms for SSAI content. This determines at what time to load the video info like resolutions. Use this only when you have SSAI stream where ads resolution is not the same as content resolution.
 
-Platforms: Android, iOS
+Note on Android, native controls are available by default. If needed, you can also add your controls or use a package like [react-native-video-controls].
+
+Platforms: Android, iOS, react-native-dom
 
 #### disableFocus
 Determines whether video audio should override background music/audio in Android devices.
-* **false (default)** - Override background audio/music
+* ** false (default)** - Override background audio/music
 * **true** - Let background audio/music from other apps play
- 
-Note: Allows multiple videos to play if set to `true`. If `false`, when one video is playing and another is started, the first video will be paused.
- 
+
 Platforms: Android
 
 #### disableDisconnectError
@@ -447,7 +465,7 @@ Determines if the player needs to throw an error when connection is lost or not
 Platforms: Android
 
 ### DRM
-To setup DRM please follow [this guide](./docs/DRM.md)
+To setup DRM please follow [this guide](./DRM.md)
 
 Platforms: Android, iOS
 
@@ -486,14 +504,6 @@ Enable video filter.
 * **true** - Enable filter
 
 Platforms: iOS
-
-#### Focusable
-Whether this video view should be focusable with a non-touch input device, eg. receive focus with a hardware keyboard.
-* **false** - Makes view unfocusable
-* **true (default)** - Makes view focusable
- 
-Platforms: Android
-
 
 #### fullscreen
 Controls whether the player enters fullscreen on play.
@@ -539,6 +549,16 @@ Controls whether the ExoPlayer shutter view (black screen while loading) is enab
 
 Platforms: Android
 
+#### id
+Set the DOM id element so you can use document.getElementById on web platforms. Accepts string values.
+
+Example:
+```
+id="video"
+```
+
+Platforms: react-native-dom
+
 #### ignoreSilentSwitch
 Controls the iOS silent switch behavior
 * **"inherit" (default)** - Use the default AVPlayer behavior
@@ -546,6 +566,17 @@ Controls the iOS silent switch behavior
 * **"obey"** - Don't play audio if the silent switch is set
 
 Platforms: iOS
+
+#### limitMaxResolutionToScreenSize
+Controls whether to limit the available videotracks to not exceed device screen resolution. If enabled the video track list will be limited to resolutions that are smaller or equal to the screen resolution of the device (this also affects automatic video track selection).
+
+Default: false. Don't limit the video track resolution.
+
+Example:
+```
+limitMaxResolutionToScreenSize={true}
+```
+Platforms: Android
 
 #### maxBitRate
 Sets the desired limit, in bits per second, of network bandwidth consumption when multiple video streams are available for a playlist.
@@ -853,23 +884,6 @@ type: 'mpd' }}
 The following other types are supported on some platforms, but aren't fully documented yet:
 `content://, ms-appx://, ms-appdata://, assets-library://`
 
-
-#### subtitleStyle
-
-Property | Description | Platforms
---- | --- | ---
-fontSizeTrack | Adjust the font size of the subtitles. Default: font size of the device | Android
-paddingTop | Adjust the top padding of the subtitles. Default: 0| Android
-paddingBottom | Adjust the bottom padding of the subtitles. Default: 0| Android
-paddingLeft | Adjust the left padding of the subtitles. Default: 0| Android
-paddingRight | Adjust the right padding of the subtitles. Default: 0| Android
-
-
-Example:
-
-```
-subtitleStyle={{ paddingBottom: 50, fontSize: 20 }}
-```
 
 #### textTracks
 Load one or more "sidecar" text tracks. This takes an array of objects representing each track. Each object should have the format:
@@ -1369,67 +1383,8 @@ this.player.seek(120, 50); // Seek to 2 minutes with +/- 50 milliseconds accurac
 
 Platforms: iOS
 
-#### Static methods
 
-### Video Decoding capabilities
 
-A module embed in ReactNativeVideo allow to query device supported feature.
-To use it include the module as following:
-```javascript
-import { VideoDecoderProperties } from '@ifs/react-native-video-enhanced'
-```
-
-Platforms: Android
-
-#### getWidevineLevel
-
-Indicates whether the widevine level supported by device.
-
-Possible results:
--   **0** - unable to determine widevine support (typically not supported)
--   **1**, **2**, **3** - Widevine level supported
-
-Platforms: Android
-
-Example:
-
-```
-VideoDecoderProperties.getWidevineLevel().then((widevineLevel) => {
-    ...
-}
-```
-
-#### isCodecSupported
-
-Indicates whether the provided codec is supported level supported by device.
-
-parameters:
-- **mimetype**: mime type of codec to query
-- **width**, **height**: resolution to query
-
-Possible results:
--   **true** - codec supported
--   **false** - codec is not supported
-
-Example:
-```
-VideoDecoderProperties.isCodecSupported('video/avc', 1920, 1080).then(
-    ...
-}
-```
-Platforms: Android
-
-#### isHEVCSupported
-
-Helper which Indicates whether the provided HEVC/1920*1080 is supported level supported by device.
-It uses isCodecSupported internally.
-
-Example:
-```
-VideoDecoderProperties.isHEVCSupported().then((hevcSupported) => {
-    ...
-}
-```
 
 ### iOS App Transport Security
 
@@ -1619,3 +1574,11 @@ allprojects {
 ```
 If you encounter an error `Could not find com.android.support:support-annotations:27.0.0.` reinstall your Android Support Repository.
  
+## Black Screen on Release build (Android)
+If your video work on Debug mode, but on Release you see only black screen, please, check the link to your video. If you use 'http' protocol there, you will need to add next string to your AndroidManifest.xml file.
+```
+<application
+ ...
+ android:usesCleartextTraffic="true"
+>
+```

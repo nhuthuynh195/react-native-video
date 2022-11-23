@@ -14,8 +14,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const { VideoDecoderProperties } = NativeModules
-export { TextTrackType, FilterType, DRMType, VideoDecoderProperties }
+export { TextTrackType, FilterType, DRMType };
 
 export default class Video extends Component {
 
@@ -276,20 +275,16 @@ export default class Video extends Component {
     let uri = source.uri || '';
     if (uri && uri.match(/^\//)) {
       uri = `file://${uri}`;
+    } else if (uri === '') {
+      return null;
     }
 
     if (!uri) {
-      console.log('Trying to load empty source.');
+      console.warn('Trying to load empty source.');
     }
 
-    const isNetwork = !!(uri && uri.match(/^https?:/i));
-    const isAsset = !!(uri && uri.match(/^(assets-library|ph|ipod-library|file|content|ms-appx|ms-appdata):/i));
-
-    if ((uri || uri === '') && !isNetwork && !isAsset) {
-      if (this.props.onError) {
-        this.props.onError({error: {errorString: 'invalid url, player will stop', errorCode: 'INVALID_URL'}});
-      }
-    }
+    const isNetwork = !!(uri && uri.match(/^https?:/));
+    const isAsset = !!(uri && uri.match(/^(assets-library|ipod-library|file|content|ms-appx|ms-appdata):/));
 
     let nativeResizeMode;
     const RCTVideoInstance = this.getViewManagerConfig('RCTVideo');
@@ -487,7 +482,6 @@ Video.propTypes = {
   reportBandwidth: PropTypes.bool,
   contentStartTime: PropTypes.number,
   disableFocus: PropTypes.bool,
-  focusable: PropTypes.bool,
   disableBuffering: PropTypes.bool,
   controls: PropTypes.bool,
   audioOnly: PropTypes.bool,
@@ -495,13 +489,6 @@ Video.propTypes = {
   fullscreenAutorotate: PropTypes.bool,
   fullscreenOrientation: PropTypes.oneOf(['all', 'landscape', 'portrait']),
   progressUpdateInterval: PropTypes.number,
-  subtitleStyle: PropTypes.shape({
-    paddingTop: PropTypes.number,
-    paddingBottom: PropTypes.number,
-    paddingLeft: PropTypes.number,
-    paddingRight: PropTypes.number,
-    fontSize: PropTypes.number,
-  }),
   useTextureView: PropTypes.bool,
   useSecureView: PropTypes.bool,
   hideShutterView: PropTypes.bool,
