@@ -271,7 +271,8 @@ export default class Video extends Component {
   render() {
     const resizeMode = this.props.resizeMode;
     const source = resolveAssetSource(this.props.source) || {};
-    const shouldCache = !source.__packager_asset;
+    // const shouldCache = !source.__packager_asset;
+    const shouldCache = false;
 
     let uri = source.uri || '';
     if (uri && uri.match(/^\//)) {
@@ -279,7 +280,7 @@ export default class Video extends Component {
     }
 
     if (!uri) {
-      console.log('Trying to load empty source.');
+      // console.log('Trying to load empty source.');
     }
 
     const isNetwork = !!(uri && uri.match(/^https?:/i));
@@ -287,7 +288,7 @@ export default class Video extends Component {
 
     if ((uri || uri === '') && !isNetwork && !isAsset) {
       if (this.props.onError) {
-        this.props.onError({error: {errorString: 'invalid url, player will stop', errorCode: 'INVALID_URL'}});
+        this.props.onError({error: {errorString: 'Invalid url, player will stop', errorCode: 'INVALID_URL'}});
       }
     }
 
